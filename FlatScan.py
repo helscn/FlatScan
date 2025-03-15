@@ -5,31 +5,90 @@ import os
 import sys
 import glob
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
-from PySide6.QtCore import QObject, QThread, Signal, Slot, QMutex, QWaitCondition
+from PySide6.QtCore import QObject, QThread, Signal, Slot
+
 from MainWindow_ui import Ui_MainWindow
 
+
+class FileAnalyzerThread(QThread):
+    logging = Signal(str, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.directory = ""
+        self._stop_event = True
+        self._terminal = False
+
+    def set_directory(self, directory):
+        self.directory = directory
+
+    def run(self):
+        while True:
+            while not self._stop_event:
+                for file_path, _, name_part, _ in find_matching_files(self.directory, "*.txt"):
+                    if self._stop_event:
+                        break
+                    self.logging.emit(name_part+".txt", "INFO")
+            if self._terminal:
+                break
+            if self._stop_event:
+                self.msleep(1000)  # Sleep for 1 second before checking again
+
+    def resume(self):
+        self._stop_event = False
+    def stop(self):
+        self._stop_event = True
+
+    def terminate(self):
+        self._terminal = True
+        self._stop_event = True
+
+
 class MyMainWindow(QMainWindow, Ui_MainWindow):
+    start_thread_signal = Signal()
+    set_directory_signal = Signal(str)
+    stop_thread_signal = Signal()
+    resume_thread_signal = Signal()
+    terminate_thread_signal = Signal()
+
     def __init__(self):
         super().__init__()
         self.setupUi(self)
-        self.init()
-        
-    def init(self):
-        self.folderPath.setText("D:/")
-        self.processLog.setReadOnly(True)
-        self.processLog.setMaximumBlockCount(30)
+        self.analyzer_thread = FileAnalyzerThread()
+        self.analyzer_thread.logging.connect(self.logging)
+        self.set_directory_signal.connect(self.analyzer_thread.set_directory)
+        self.start_thread_signal.connect(self.analyzer_thread.start)
+        self.stop_thread_signal.connect(self.analyzer_thread.stop)
+        self.terminate_thread_signal.connect(self.analyzer_thread.terminate)
+        self.resume_thread_signal.connect(self.analyzer_thread.resume)
         self.btnSelectFolder.clicked.connect(self.select_folder)
         self.btnStart.clicked.connect(self.start_analysis)
         self.btnStop.clicked.connect(self.stop_analysis)
+        self.btnExit.clicked.connect(self.exit_application)  # 添加 btnExit 按钮点击事件处理函数
+
+        self.folderPath.setText("D:\\")
+        self.processLog.setReadOnly(True)
+        self.processLog.setMaximumBlockCount(1000)
+        self.start_thread_signal.emit()
+        self.btnStop.setEnabled(False)
 
     def start_analysis(self):
-        self.logging("开始分析...", "INFO")
-
+        folder_path = self.folderPath.text()
+        if folder_path:
+            self.set_directory_signal.emit(folder_path)
+            self.resume_thread_signal.emit()
+            self.logging("正在搜索以下文件夹中的平整度数据："+folder_path, "WARN")
+            self.btnSelectFolder.setEnabled(False)
+            self.btnStart.setEnabled(False)
+            self.btnStop.setEnabled(True)
 
     def stop_analysis(self):
-        self.logging("异常","ERROR")
+        self.stop_thread_signal.emit()
+        self.logging("正在停止后台平整度数据分析...", "ERROR")
+        self.btnSelectFolder.setEnabled(True)
+        self.btnStart.setEnabled(True)
+        self.btnStop.setEnabled(False)
 
-    
     def logging(self, message, level="INFO"):
         color = {
             "INFO": "#141414",
@@ -40,7 +99,6 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.processLog.appendHtml(f'<div style="color: {color}">{message}</div>')
         self.processLog.verticalScrollBar().setValue(self.processLog.verticalScrollBar().maximum())
 
-
     def select_folder(self):
         selected_dir = QFileDialog.getExistingDirectory(
             parent=None,          # 父窗口（None表示无父窗口）
@@ -50,6 +108,16 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         )
         if selected_dir:
             self.folderPath.setText(selected_dir)
+
+    def closeEvent(self, event):
+        self.terminate_thread_signal.emit()
+        self.analyzer_thread.wait()  # 等待线程结束
+        event.accept()
+
+    def exit_application(self):  # 新增的退出应用程序函数
+        self.terminate_thread_signal.emit()
+        self.analyzer_thread.wait()  # 等待线程结束
+        QApplication.quit()  # 退出应用程序
 
 def find_matching_files(directory, pattern):
     """
