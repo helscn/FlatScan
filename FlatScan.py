@@ -3,7 +3,11 @@
 
 import os
 import sys
+import re
 import glob
+import math
+import numpy as np
+import chardet
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
@@ -18,6 +22,15 @@ class FileAnalyzerThread(QThread):
         self.directory = ""
         self._stop_event = True
         self._terminal = False
+        self.begin_pattern = re.compile(r'^\:BEGIN\s*$')
+        self.end_pattern = re.compile(r'^\:END\s*$')
+        self.pos_pattern = re.compile(
+            r'^点 \d+\: X 坐标\s+(-?\d+\.?\d*).*Y 坐标\s+(-?\d+\.?\d*).*Z 坐标\s+(-?\d+\.?\d*).*')
+        self.location_pattern = re.compile(r'^[^\s\:]+\s*$')
+        self.sn_pattern1 = re.compile(
+            r'^文字说明 \d+.*日期/时间 (\d{4}\-\d{2}\-\d{2}) (\d{2}\:\d{2}\:\d{2}) ([^\s]+)\s*$')
+        self.sn_pattern2 = re.compile(
+            r'^提示 \d+.*输入 ([^\s]+)\s+.*日期/时间 (\d{4}\-\d{2}\-\d{2}) (\d{2}\:\d{2}\:\d{2})\s*$')
 
     def set_directory(self, directory):
         self.directory = directory
@@ -42,6 +55,156 @@ class FileAnalyzerThread(QThread):
     def terminate(self):
         self._terminal = True
         self._stop_event = True
+
+    def load_txt_file(self,file_path):
+        # 导入三次元测量数据 .txt 文件，将所有单元的数据存储在数组中
+        flag = False
+        data = []
+        with open(file_path, mode='rb') as f:
+            encoding = chardet.detect(f.read())['encoding']
+        with open(file_path, mode='r', encoding=encoding, errors='ignore') as f:
+            for line in f:
+                if self.begin_pattern.match(line):
+                    # 识别三次元数据起始标记
+                    flag = True
+                    unit = {
+                        'sn': '',
+                        'location': '',
+                        'date': '',
+                        'time': '',
+                        'minX': None,
+                        'maxX': None,
+                        'minY': None,
+                        'maxY': None,
+                        'flatness': None,
+                        'shape': '未知',
+                        'pos': []
+                    }
+                    continue
+
+                if not flag:
+                    # 未识别到三次元数据起始标记时忽略
+                    continue
+
+                if self.end_pattern.match(line):
+                    # 识别三次元数据结束标记
+                    flag = False
+                    if len(unit['pos']) > 2:
+                        data.append(unit)
+
+                elif self.location_pattern.match(line):
+                    # 识别测量位置
+                    unit['location'] = line.strip()
+
+                elif self.pos_pattern.match(line):
+                    # 识别测量数据
+                    pos = self.pos_pattern.match(line).groups()
+                    x = float(pos[0])
+                    y = float(pos[1])
+                    z = float(pos[2])
+                    if unit['minX'] is None or x < unit['minX']:
+                        unit['minX'] = x
+                    if unit['maxX'] is None or x > unit['maxX']:
+                        unit['maxX'] = x
+                    if unit['minY'] is None or y < unit['minY']:
+                        unit['minY'] = y
+                    if unit['maxY'] is None or y > unit['maxY']:
+                        unit['maxY'] = y
+                    unit['pos'].append([x, y, z])
+
+                elif self.sn_pattern1.match(line):
+                    # 识别测量编号，示使如下：
+                    # 文字说明 75: 文字说明  文字说明 75: 日期/时间 2025-02-24 18:50:25 9206301-02
+                    date, time, sn = self.sn_pattern1.match(line).groups()
+                    unit['sn'] = sn
+                    unit['date'] = date
+                    unit['time'] = time
+
+                elif self.sn_pattern2.match(line):
+                    # 识别测量编号，示例如下：
+                    # 提示 44: 提示  提示 44: 输入 42363-03 提示 44: 日期/时间 2025-02-19 13:05:27
+                    sn, date, time = self.sn_pattern1.match(line).groups()
+                    unit['sn'] = sn
+                    unit['date'] = date
+                    unit['time'] = time
+
+        return data
+    def calcFlatness(self,data):
+        # 计算理想参考平面的系数
+        matrixA = [[v[0], v[1], 1] for v in data['pos']]
+        matrixB = [[v[2]] for v in data['pos']]
+        matrixA = np.array(matrixA)
+        matrixB = np.array(matrixB)
+        matrixCoeff = np.dot(np.dot(np.linalg.inv(
+            np.dot(matrixA.T, matrixA)), matrixA.T), matrixB)
+        coeffA = -1 * matrixCoeff[0][0]
+        coeffB = -1 * matrixCoeff[1][0]
+        coeffC = 1
+        coeffD = -1 * matrixCoeff[2][0]
+        constant = math.sqrt(coeffA*coeffA+coeffB*coeffB+coeffC*coeffC)
+
+        # 计算每个点参考理想平面的高度
+        for point in data['pos']:
+            point[2] = (coeffA*point[0]+coeffB*point[1] +
+                        coeffC*point[2]+coeffD)/constant
+
+        # 计算中心形貌统计值
+        centralZoneLimit = 0.5  # 中心区域限制
+        centralMinZ = None      # 中心区域最小Z值
+        centralMaxZ = None      # 中心区域最大Z值
+        marginalSum = 0         # 边区域Z'总和
+        marginalCount = 0       # 边区域Z'个数
+        minZ = None
+        maxZ = None
+        sum = 0
+
+        # 迭代计算最小、最大、加总、平均Z值
+        for point in data['pos']:
+            # 计算总体Z'的统计值
+            if minZ is None or point[2] < minZ:
+                minZ = point[2]
+            if maxZ is None or point[2] > maxZ:
+                maxZ = point[2]
+            sum += point[2]
+
+            # 计算中心区域Z'统计值
+            minX = data['minX']
+            maxX = data['maxX']
+            minY = data['minY']
+            maxY = data['maxY']
+            rangeX = maxX-minX
+            rangeY = maxY-minY
+
+            if abs(2*(point[0]-minX)/rangeX - 1) < centralZoneLimit and abs(2*(point[1]-minY)/rangeY - 1) < centralZoneLimit:
+                # 当前量测点为板中心位置时
+                if centralMinZ is None or point[2] < centralMinZ:
+                    centralMinZ = point[2]
+                if centralMaxZ is None or point[2] > centralMaxZ:
+                    centralMaxZ = point[2]
+            else:
+                # 当前量测点为板边位置时
+                marginalSum += point[2]
+                marginalCount += 1
+
+        # 计算中心区域形貌
+        marginalAvg = marginalSum/marginalCount
+        data['shape'] = '未知'
+        if centralMinZ is not None:
+            if centralMinZ > marginalAvg:
+                # 中心凸起
+                data['shape'] = '中心凸起'
+            elif centralMaxZ < marginalAvg:
+                # 中心下凹
+                data['shape'] = '中心下凹'
+            else:
+                # 凹凸不平
+                data['shape'] = '凹凸不平'
+
+        # 将Z坐标转换为正值
+        for point in data['pos']:
+            point[2] = point[2]-minZ
+        data['flatness'] = maxZ-minZ
+        return data
 
 
 class MyMainWindow(QMainWindow, Ui_MainWindow):
