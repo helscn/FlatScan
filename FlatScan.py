@@ -6,8 +6,12 @@ import sys
 import re
 import glob
 import math
-import numpy as np
 import chardet
+import numpy as np
+from scipy import interpolate
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
@@ -19,6 +23,7 @@ class FileAnalyzerThread(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.figure = plt.figure()
         self.directory = ""
         self._stop_event = True
         self._terminal = False
@@ -128,7 +133,45 @@ class FileAnalyzerThread(QThread):
                     unit['date'] = date
                     unit['time'] = time
 
-        return data
+    def create_plot(self, data, save_path):
+        # 使用matplotlib绘制三维图形并保存到指定路径
+        # 提取 x, y, z 坐标
+        x = [point[0] for point in data['pos']]
+        y = [point[1] for point in data['pos']]
+        z = [point[2] for point in data['pos']]
+
+        # 创建三维图形Axes3D对象
+        self.figure.clear()
+        ax = Axes3D(self.figure, auto_add_to_figure=False)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.view_init(elev=75, azim=-70)
+        ax.set_xlim(data['minX'], data['maxX'])
+        ax.set_ylim(data['minY'], data['maxY'])
+        self.figure.add_axes(ax)
+
+        # 使用RBF插值函数进行曲面拟合
+        func_name = 'thin_plate'
+        color_map = 'rainbow'
+        func = interpolate.Rbf(x, y, z, function=func_name)
+        xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
+        znew = func(xnew, ynew)
+        # newz = func(x, y)
+        # ax.scatter(x, y, newz+0.001, c='r', marker='o')
+
+        # 绘制曲面
+        surf = ax.plot_surface(
+            xnew, ynew, znew, cmap=color_map)
+        self.figure.colorbar(
+            surf, shrink=0.6, aspect=10)
+
+
+        # 保存图形
+        self.figure.canvas.draw()
+        plt.savefig(save_path)
+        plt.close(self.figure)
+
     def calcFlatness(self,data):
         # 计算理想参考平面的系数
         matrixA = [[v[0], v[1], 1] for v in data['pos']]
