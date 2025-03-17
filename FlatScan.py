@@ -35,6 +35,7 @@ class FileAnalyzerThread(QThread):
             "centralZoneLimit": 0.5,
             "rbfFunction": "thin_plate"
         }
+        self._process_next = False
         self._stop_event = True
         self._terminal = False
         self.begin_pattern = re.compile(r'^\:BEGIN\s*$')
@@ -49,6 +50,9 @@ class FileAnalyzerThread(QThread):
 
     def update_config(self, config):
         self.config = config
+
+    def process_next(self):
+        self._process_next = True
 
     def run(self):
         while True:
@@ -81,8 +85,10 @@ class FileAnalyzerThread(QThread):
                                     break
                                 data=self.calcFlatness(unit)    # 计算相对理想平面的Z坐标
                                 result.append([filename,unit['date'],unit['time'],unit['sn'],unit['location'],unit['shape'],unit['flatness']])
+                                self._process_next=False
                                 self.flatnessSignal.emit(dirpath,filename,data)
-                                self.msleep(100)
+                                while not (self._process_next or self._stop_event):
+                                    self.msleep(100)
                             if self._stop_event:
                                 self.logging.emit(f"已经停止文件 {fullfilename} 的平整度分析！", "ERROR")
                                 break
@@ -273,6 +279,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     stop_thread_signal = Signal()
     resume_thread_signal = Signal()
     terminate_thread_signal = Signal()
+    process_next_signal = Signal()
 
     def __init__(self):
         super().__init__()
@@ -292,6 +299,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.terminate_thread_signal.connect(self.analyzer_thread.terminate)
         self.resume_thread_signal.connect(self.analyzer_thread.resume)
         self.resume_thread_signal.connect(self.resume)
+        self.process_next_signal.connect(self.analyzer_thread.process_next)
         self.btnSelectFolder.clicked.connect(self.select_folder)
         self.btnStart.clicked.connect(self.start_analysis)
         self.btnStop.clicked.connect(self.stop_analysis)
@@ -473,6 +481,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         plt.savefig(plot2d_file)
         plt.close(figure_2d)
 
+        self.process_next_signal.emit()
 
 def find_matching_files(directory, pattern):
     """
