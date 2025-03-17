@@ -8,6 +8,7 @@ import json
 import glob
 import math
 import csv
+from datetime import datetime
 import chardet
 import numpy as np
 from scipy import interpolate
@@ -15,13 +16,16 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
+from PySide6.QtGui import QIcon
 from PySide6.QtCore import QThread, Signal, QCoreApplication
 
+import resource_rc
 from MainWindow_ui import Ui_MainWindow
 
 
 class FileAnalyzerThread(QThread):
     logging = Signal(str, str)
+    showInfoSignal = Signal(str)
     flatnessSignal = Signal(str, str, dict)   #文件夹，文件名，平整度数据
 
     def __init__(self, parent=None):
@@ -53,6 +57,7 @@ class FileAnalyzerThread(QThread):
                 for file_path in glob.iglob(search_pattern, recursive=True):
                     if self._stop_event:
                         break
+                    self.showInfoSignal.emit(f"正在分析文件：{file_path}")
                     if os.path.isfile(file_path):  # 确保仅处理文件
                         dirpath = os.path.dirname(file_path)
                         fullfilename = os.path.basename(file_path)
@@ -63,7 +68,7 @@ class FileAnalyzerThread(QThread):
                             # 跳过已经转换的txt文件
                             continue
                         
-                        self.logging.emit(f"正在分析处理文件：{fullfilename}", "INFO")
+                        self.logging.emit(f"正在分析文件：{file_path}", "INFO")
                         rawdata=self.load_txt_file(file_path)  # 读取三次元量测的txt文件
                         if not rawdata:
                             self.logging.emit(f"文件 {fullfilename} 中没有找到量测数据！", "ERROR")
@@ -88,12 +93,19 @@ class FileAnalyzerThread(QThread):
                                 self.logging.emit(f"文件 {fullfilename} 分析完成！", "INFO")
                         except Exception as e:
                             self.logging.emit(f"文件 {fullfilename} 分析失败：{e}", "ERROR")
+                self.showInfoSignal.emit("就绪。")
+                for _ in range(5):
+                    self.msleep(1000)
+                    if self._stop_event:
+                        break
                         
 
             if self._terminal:
                 break
             if self._stop_event:
                 self.msleep(1000)
+
+                
 
     def resume(self):
         self._stop_event = False
@@ -174,7 +186,7 @@ class FileAnalyzerThread(QThread):
                 elif self.sn_pattern2.match(line):
                     # 识别测量编号，示例如下：
                     # 提示 44: 提示  提示 44: 输入 42363-03 提示 44: 日期/时间 2025-02-19 13:05:27
-                    sn, date, time = self.sn_pattern1.match(line).groups()
+                    sn, date, time = self.sn_pattern2.match(line).groups()
                     unit['sn'] = sn
                     unit['date'] = date
                     unit['time'] = time
@@ -265,11 +277,15 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        self.setWindowTitle("平整度自动分析程序")
+        self.setWindowIcon(QIcon(":/icon.ico"))
+        self.btnStop.setEnabled(False)
         self.processLog.setReadOnly(True)
         self.processLog.setMaximumBlockCount(1000)
         self.analyzer_thread = FileAnalyzerThread()
         self.analyzer_thread.logging.connect(self.logging)
         self.analyzer_thread.flatnessSignal.connect(self.create_plot)
+        self.analyzer_thread.showInfoSignal.connect(self.statusbar.showMessage)
         self.start_thread_signal.connect(self.analyzer_thread.start)
         self.stop_thread_signal.connect(self.analyzer_thread.stop)
         self.terminate_thread_signal.connect(self.analyzer_thread.terminate)
@@ -280,10 +296,13 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.btnExit.clicked.connect(self.exit_application)  # 添加 btnExit 按钮点击事件处理函数
 
         self.load_config()  # 加载配置信息
-        self.folderPath.setText(self.config.get("dataDirectory", "D:\\"))
+        self.folderPath.setText(self.config["dataDirectory"])
         self.update_config_signal.connect(self.analyzer_thread.update_config)
         self.start_thread_signal.emit()
-        self.btnStop.setEnabled(False)
+        self.statusbar.showMessage("就绪。")  # 初始化状态栏信息
+
+        if self.config["autoStart"]:
+            self.btnStart.click()
 
     def load_config(self):
         # 获取当前脚本文件所在目录
@@ -332,7 +351,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
     def stop_analysis(self):
         self.stop_thread_signal.emit()
-        self.logging("正在停止后台平整度数据分析...", "ERROR")
+        self.logging("手动停止后台平整度数据分析。", "ERROR")
         self.btnSelectFolder.setEnabled(True)
         self.btnStart.setEnabled(True)
         self.btnStop.setEnabled(False)
@@ -344,7 +363,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             "ERROR": "#FF6969"
         }.get(level, "#141414")
         
-        self.processLog.appendHtml(f'<div style="color: {color}">{message}</div>')
+        now=datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        self.processLog.appendHtml(f'<div style="color: {color}">[{now}] {message}</div>')
         self.processLog.verticalScrollBar().setValue(self.processLog.verticalScrollBar().maximum())
 
     def select_folder(self):
@@ -355,6 +375,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             options=QFileDialog.ShowDirsOnly  # 只显示文件夹
         )
         if selected_dir:
+            selected_dir = os.path.normpath(selected_dir)
             self.folderPath.setText(selected_dir)
             self.config["dataDirectory"]=selected_dir
             self.save_config()
