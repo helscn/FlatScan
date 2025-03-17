@@ -6,7 +6,7 @@ SET compile_name=FlatScan
 
 REM 额外需要进行打包的文件夹及文件
 REM SET add_data=--add-data "ui\*.*;.\ui" --add-data ".\changelog.md;."
-SET add_data=--add-data ".\config.json:.\config.json"
+SET add_data=--add-data ".\config.json:."
 
 REM 打包模式，--onefile 打包为单文件，--onedir 打包为单文件夹
 SET compile_mode=--onedir

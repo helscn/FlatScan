@@ -93,8 +93,8 @@ class FileAnalyzerThread(QThread):
                                 self.logging.emit(f"文件 {fullfilename} 分析完成！", "INFO")
                         except Exception as e:
                             self.logging.emit(f"文件 {fullfilename} 分析失败：{e}", "ERROR")
-                self.showInfoSignal.emit("就绪。")
-                for _ in range(5):
+                self.showInfoSignal.emit("等待30秒后重新扫描文件夹。")
+                for _ in range(30):
                     self.msleep(1000)
                     if self._stop_event:
                         break
@@ -288,14 +288,17 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.analyzer_thread.showInfoSignal.connect(self.statusbar.showMessage)
         self.start_thread_signal.connect(self.analyzer_thread.start)
         self.stop_thread_signal.connect(self.analyzer_thread.stop)
+        self.stop_thread_signal.connect(self.stop)
         self.terminate_thread_signal.connect(self.analyzer_thread.terminate)
         self.resume_thread_signal.connect(self.analyzer_thread.resume)
+        self.resume_thread_signal.connect(self.resume)
         self.btnSelectFolder.clicked.connect(self.select_folder)
         self.btnStart.clicked.connect(self.start_analysis)
         self.btnStop.clicked.connect(self.stop_analysis)
         self.btnExit.clicked.connect(self.exit_application)  # 添加 btnExit 按钮点击事件处理函数
 
         self.load_config()  # 加载配置信息
+        self._stop_event = True
         self.folderPath.setText(self.config["dataDirectory"])
         self.update_config_signal.connect(self.analyzer_thread.update_config)
         self.start_thread_signal.emit()
@@ -304,6 +307,10 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         if self.config["autoStart"]:
             self.btnStart.click()
 
+    def resume(self):
+        self._stop_event = False
+    def stop(self):
+        self._stop_event = True
     def load_config(self):
         # 获取当前脚本文件所在目录
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -382,11 +389,13 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.update_config_signal.emit(self.config)
 
     def closeEvent(self, event):
+        self.stop_thread_signal.emit()
         self.terminate_thread_signal.emit()
         self.analyzer_thread.wait()  # 等待线程结束
         event.accept()
 
     def exit_application(self):  # 新增的退出应用程序函数
+        self.stop_thread_signal.emit()
         self.terminate_thread_signal.emit()
         self.analyzer_thread.wait()  # 等待线程结束
         QApplication.quit()  # 退出应用程序
@@ -409,6 +418,9 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     def create_plot(self, dirpath, filename, data):
         # 使用matplotlib绘制三维曲面图及二维等高线图，并将图形保存到指定路径
         # 提取 x, y, z 坐标
+        QCoreApplication.processEvents()
+        if self._stop_event:
+            return
         x = [point[0] for point in data['pos']]
         y = [point[1] for point in data['pos']]
         z = [point[2] for point in data['pos']]
@@ -423,6 +435,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
         # 绘制三维曲面图
         QCoreApplication.processEvents()
+        if self._stop_event:
+            return
         figure_3d = plt.figure()
         ax_3d = Axes3D(figure_3d, auto_add_to_figure=False)
         ax_3d.set_xlabel('X')
@@ -443,6 +457,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
         # 创建二维等高线图
         QCoreApplication.processEvents()
+        if self._stop_event:
+            return
         figure_2d = plt.figure()
         ax_2d = figure_2d.add_subplot(111)
         ax_2d.set_xlabel('X')
