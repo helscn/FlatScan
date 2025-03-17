@@ -4,8 +4,10 @@
 import os
 import sys
 import re
+import json
 import glob
 import math
+import csv
 import chardet
 import numpy as np
 from scipy import interpolate
@@ -13,18 +15,22 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QThread, Signal, QCoreApplication
 
 from MainWindow_ui import Ui_MainWindow
 
 
 class FileAnalyzerThread(QThread):
     logging = Signal(str, str)
+    flatnessSignal = Signal(str, str, dict)   #文件夹，文件名，平整度数据
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.figure = plt.figure()
-        self.directory = ""
+        self.config = {
+            "dataDirectory": "D:\\",
+            "centralZoneLimit": 0.5,
+            "rbfFunction": "thin_plate"
+        }
         self._stop_event = True
         self._terminal = False
         self.begin_pattern = re.compile(r'^\:BEGIN\s*$')
@@ -37,20 +43,57 @@ class FileAnalyzerThread(QThread):
         self.sn_pattern2 = re.compile(
             r'^提示 \d+.*输入 ([^\s]+)\s+.*日期/时间 (\d{4}\-\d{2}\-\d{2}) (\d{2}\:\d{2}\:\d{2})\s*$')
 
-    def set_directory(self, directory):
-        self.directory = directory
+    def update_config(self, config):
+        self.config = config
 
     def run(self):
         while True:
             while not self._stop_event:
-                for file_path, _, name_part, _ in find_matching_files(self.directory, "*.txt"):
+                search_pattern = os.path.join(self.config['dataDirectory'], "**", "*平整度*.txt")
+                for file_path in glob.iglob(search_pattern, recursive=True):
                     if self._stop_event:
                         break
-                    self.logging.emit(name_part+".txt", "INFO")
+                    if os.path.isfile(file_path):  # 确保仅处理文件
+                        dirpath = os.path.dirname(file_path)
+                        fullfilename = os.path.basename(file_path)
+                        filename, fileext = os.path.splitext(fullfilename)
+                        
+                        result_file=os.path.join(dirpath,filename+".csv")
+                        if os.path.isfile(result_file):
+                            # 跳过已经转换的txt文件
+                            continue
+                        
+                        self.logging.emit(f"正在分析处理文件：{fullfilename}", "INFO")
+                        rawdata=self.load_txt_file(file_path)  # 读取三次元量测的txt文件
+                        if not rawdata:
+                            self.logging.emit(f"文件 {fullfilename} 中没有找到量测数据！", "ERROR")
+                            continue
+
+                        result=[["文件名","日期","时间","板编号","量测位置","中心形貌","平整度"]]
+                        try:
+                            for unit in rawdata:
+                                if self._stop_event:
+                                    break
+                                data=self.calcFlatness(unit)    # 计算相对理想平面的Z坐标
+                                result.append([filename,unit['date'],unit['time'],unit['sn'],unit['location'],unit['shape'],unit['flatness']])
+                                self.flatnessSignal.emit(dirpath,filename,data)
+                                self.msleep(100)
+                            if self._stop_event:
+                                self.logging.emit(f"已经停止文件 {fullfilename} 的平整度分析！", "ERROR")
+                                break
+                            with open(result_file,mode='w',newline='',encoding='gb2312') as csvfile:
+                                # 保存平整度数据
+                                writer = csv.writer(csvfile)
+                                writer.writerows(result)
+                                self.logging.emit(f"文件 {fullfilename} 分析完成！", "INFO")
+                        except Exception as e:
+                            self.logging.emit(f"文件 {fullfilename} 分析失败：{e}", "ERROR")
+                        
+
             if self._terminal:
                 break
             if self._stop_event:
-                self.msleep(1000)  # Sleep for 1 second before checking again
+                self.msleep(1000)
 
     def resume(self):
         self._stop_event = False
@@ -94,8 +137,11 @@ class FileAnalyzerThread(QThread):
                 if self.end_pattern.match(line):
                     # 识别三次元数据结束标记
                     flag = False
-                    if len(unit['pos']) > 2:
+                    if len(unit['pos']) > 2 and unit['sn']!="" and unit['location']!="":
                         data.append(unit)
+                    else:
+                        if unit['sn']!="" and unit['location']!="":
+                            self.logging.emit(f"文件 {file_path} 中编号 {unit['sn']} 的 {unit['location']} 数据异常，已忽略！", "ERROR")
 
                 elif self.location_pattern.match(line):
                     # 识别测量位置
@@ -132,46 +178,7 @@ class FileAnalyzerThread(QThread):
                     unit['sn'] = sn
                     unit['date'] = date
                     unit['time'] = time
-
-    def create_plot(self, data, save_path):
-        # 使用matplotlib绘制三维图形并保存到指定路径
-        # 提取 x, y, z 坐标
-        x = [point[0] for point in data['pos']]
-        y = [point[1] for point in data['pos']]
-        z = [point[2] for point in data['pos']]
-
-        # 创建三维图形Axes3D对象
-        self.figure.clear()
-        ax = Axes3D(self.figure, auto_add_to_figure=False)
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.view_init(elev=75, azim=-70)
-        ax.set_xlim(data['minX'], data['maxX'])
-        ax.set_ylim(data['minY'], data['maxY'])
-        self.figure.add_axes(ax)
-
-        # 使用RBF插值函数进行曲面拟合
-        func_name = 'thin_plate'
-        color_map = 'rainbow'
-        func = interpolate.Rbf(x, y, z, function=func_name)
-        xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
-        znew = func(xnew, ynew)
-        # newz = func(x, y)
-        # ax.scatter(x, y, newz+0.001, c='r', marker='o')
-
-        # 绘制曲面
-        surf = ax.plot_surface(
-            xnew, ynew, znew, cmap=color_map)
-        self.figure.colorbar(
-            surf, shrink=0.6, aspect=10)
-
-
-        # 保存图形
-        self.figure.canvas.draw()
-        plt.savefig(save_path)
-        plt.close(self.figure)
-
+        return data
     def calcFlatness(self,data):
         # 计算理想参考平面的系数
         matrixA = [[v[0], v[1], 1] for v in data['pos']]
@@ -192,14 +199,13 @@ class FileAnalyzerThread(QThread):
                         coeffC*point[2]+coeffD)/constant
 
         # 计算中心形貌统计值
-        centralZoneLimit = 0.5  # 中心区域限制
+        centralZoneLimit = self.config['centralZoneLimit']
         centralMinZ = None      # 中心区域最小Z值
         centralMaxZ = None      # 中心区域最大Z值
-        marginalSum = 0         # 边区域Z'总和
+        marginalSumZ = 0         # 边区域Z'总和
         marginalCount = 0       # 边区域Z'个数
         minZ = None
         maxZ = None
-        sum = 0
 
         # 迭代计算最小、最大、加总、平均Z值
         for point in data['pos']:
@@ -208,7 +214,6 @@ class FileAnalyzerThread(QThread):
                 minZ = point[2]
             if maxZ is None or point[2] > maxZ:
                 maxZ = point[2]
-            sum += point[2]
 
             # 计算中心区域Z'统计值
             minX = data['minX']
@@ -226,11 +231,11 @@ class FileAnalyzerThread(QThread):
                     centralMaxZ = point[2]
             else:
                 # 当前量测点为板边位置时
-                marginalSum += point[2]
+                marginalSumZ += point[2]
                 marginalCount += 1
 
         # 计算中心区域形貌
-        marginalAvg = marginalSum/marginalCount
+        marginalAvg = marginalSumZ/marginalCount
         data['shape'] = '未知'
         if centralMinZ is not None:
             if centralMinZ > marginalAvg:
@@ -252,7 +257,7 @@ class FileAnalyzerThread(QThread):
 
 class MyMainWindow(QMainWindow, Ui_MainWindow):
     start_thread_signal = Signal()
-    set_directory_signal = Signal(str)
+    update_config_signal = Signal(dict)
     stop_thread_signal = Signal()
     resume_thread_signal = Signal()
     terminate_thread_signal = Signal()
@@ -260,9 +265,11 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        self.processLog.setReadOnly(True)
+        self.processLog.setMaximumBlockCount(1000)
         self.analyzer_thread = FileAnalyzerThread()
         self.analyzer_thread.logging.connect(self.logging)
-        self.set_directory_signal.connect(self.analyzer_thread.set_directory)
+        self.analyzer_thread.flatnessSignal.connect(self.create_plot)
         self.start_thread_signal.connect(self.analyzer_thread.start)
         self.stop_thread_signal.connect(self.analyzer_thread.stop)
         self.terminate_thread_signal.connect(self.analyzer_thread.terminate)
@@ -272,16 +279,51 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.btnStop.clicked.connect(self.stop_analysis)
         self.btnExit.clicked.connect(self.exit_application)  # 添加 btnExit 按钮点击事件处理函数
 
-        self.folderPath.setText("D:\\")
-        self.processLog.setReadOnly(True)
-        self.processLog.setMaximumBlockCount(1000)
+        self.load_config()  # 加载配置信息
+        self.folderPath.setText(self.config.get("dataDirectory", "D:\\"))
+        self.update_config_signal.connect(self.analyzer_thread.update_config)
         self.start_thread_signal.emit()
         self.btnStop.setEnabled(False)
 
+    def load_config(self):
+        # 获取当前脚本文件所在目录
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, "config.json")
+
+        # 默认配置
+        default_config = {
+            "dataDirectory": "D:\\",
+            "centralZoneLimit": 0.5,
+            "rbfFunction": "thin_plate",
+            "colorMap": "rainbow",
+            "autoStart": True
+        }
+
+        # 读取配置文件
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.logging("配置文件 config.json不存在，使用默认配置。", "WARN")
+            config = {}
+
+        # 合并默认配置和读取的配置
+        default_config.update(config)
+        self.config = default_config
+
+    def save_config(self):
+        # 获取当前脚本文件所在目录
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, "config.json")
+
+        # 将配置保存到 config.json 文件中
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, ensure_ascii=False, indent=4)
+
     def start_analysis(self):
-        folder_path = self.folderPath.text()
+        folder_path = self.config["dataDirectory"]
         if folder_path:
-            self.set_directory_signal.emit(folder_path)
+            self.update_config_signal.emit(self.config)
             self.resume_thread_signal.emit()
             self.logging("正在搜索以下文件夹中的平整度数据："+folder_path, "WARN")
             self.btnSelectFolder.setEnabled(False)
@@ -300,7 +342,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             "INFO": "#141414",
             "WARN": "#1414FF",
             "ERROR": "#FF6969"
-        }.get(level, "#D4D4D4")
+        }.get(level, "#141414")
         
         self.processLog.appendHtml(f'<div style="color: {color}">{message}</div>')
         self.processLog.verticalScrollBar().setValue(self.processLog.verticalScrollBar().maximum())
@@ -314,6 +356,9 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         )
         if selected_dir:
             self.folderPath.setText(selected_dir)
+            self.config["dataDirectory"]=selected_dir
+            self.save_config()
+            self.update_config_signal.emit(self.config)
 
     def closeEvent(self, event):
         self.terminate_thread_signal.emit()
@@ -324,6 +369,73 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.terminate_thread_signal.emit()
         self.analyzer_thread.wait()  # 等待线程结束
         QApplication.quit()  # 退出应用程序
+
+    def get_axes_limit(self, serialx, serialy):
+        # 根据X、Y坐标数据计算图表坐标轴显示范围
+        xmin = np.min(serialx)
+        xmax = np.max(serialx)
+        xavg = (xmin+xmax)/2
+        ymin = np.min(serialy)
+        ymax = np.max(serialy)
+        yavg = (ymin+ymax)/2
+        xrange = xmax-xmin
+        yrange = ymax-ymin
+        if xrange > yrange:
+            return xmin, xmax, yavg-yrange*xrange/yrange/2, yavg+yrange*xrange/yrange/2
+        else:
+            return xavg-xrange*yrange/xrange/2, xavg+xrange*yrange/xrange/2, ymin, ymax
+
+    def create_plot(self, dirpath, filename, data):
+        # 使用matplotlib绘制三维曲面图及二维等高线图，并将图形保存到指定路径
+        # 提取 x, y, z 坐标
+        x = [point[0] for point in data['pos']]
+        y = [point[1] for point in data['pos']]
+        z = [point[2] for point in data['pos']]
+        minX, maxX, minY, maxY = self.get_axes_limit(x, y)
+
+        # 使用RBF插值函数进行曲面拟合
+        func_name = self.config['rbfFunction']
+        color_map = self.config['colorMap']
+        func = interpolate.Rbf(x, y, z, function=func_name)
+        xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
+        znew = func(xnew, ynew)
+
+        # 绘制三维曲面图
+        QCoreApplication.processEvents()
+        figure_3d = plt.figure()
+        ax_3d = Axes3D(figure_3d, auto_add_to_figure=False)
+        ax_3d.set_xlabel('X')
+        ax_3d.set_ylabel('Y')
+        ax_3d.set_zlabel('Z')
+        ax_3d.view_init(elev=60, azim=-70)
+        ax_3d.set_xlim(minX, maxX)
+        ax_3d.set_ylim(minY, maxY)
+        figure_3d.add_axes(ax_3d)
+        surf = ax_3d.plot_surface(
+            xnew, ynew, znew, cmap=color_map)
+        figure_3d.colorbar(
+            surf, shrink=0.6, aspect=10)
+        figure_3d.canvas.draw()
+        plot3d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_3D.jpg")
+        plt.savefig(plot3d_file)
+        plt.close(figure_3d)
+
+        # 创建二维等高线图
+        QCoreApplication.processEvents()
+        figure_2d = plt.figure()
+        ax_2d = figure_2d.add_subplot(111)
+        ax_2d.set_xlabel('X')
+        ax_2d.set_ylabel('Y')
+        ax_2d.set_xlim(minX, maxX)
+        ax_2d.set_ylim(minY, maxY)
+        contour = ax_2d.contourf(xnew, ynew, znew, cmap=color_map)
+        figure_2d.colorbar(contour, shrink=0.6, aspect=10)
+        ax_2d.scatter(x, y,  c='r', marker='o')
+        figure_2d.canvas.draw()
+        plot2d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_2D.jpg")
+        plt.savefig(plot2d_file)
+        plt.close(figure_2d)
+
 
 def find_matching_files(directory, pattern):
     """

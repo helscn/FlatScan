@@ -1,0 +1,7 @@
+{
+  "dataDirectory": "D:\\数据共享\\其他平整度",
+  "centralZoneLimit": 0.5,
+  "rbfFunction": "thin_plate",
+  "colorMap": "rainbow",
+  "autoStart": true
+}
