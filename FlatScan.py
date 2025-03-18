@@ -82,13 +82,13 @@ class FileAnalyzerThread(QThread):
 
                         result=[["文件名","日期","时间","板编号","量测位置","中心形貌","平整度"]]
                         try:
-                            for unit in rawdata:
+                            for bga in rawdata:
                                 if self._stop_event:
                                     break
-                                data=self.calcFlatness(unit)    # 计算相对理想平面的Z坐标
-                                result.append([filename,unit['date'],unit['time'],unit['sn'],unit['location'],unit['shape'],unit['flatness']])
+                                bga=self.calcFlatness(bga)    # 计算相对理想平面的Z坐标
+                                result.append([filename,bga['date'],bga['time'],bga['sn'],bga['location'],bga['shape'],bga['flatness']])
                                 self._process_next=False
-                                self.flatnessSignal.emit(dirpath,filename,data)
+                                self.flatnessSignal.emit(dirpath,filename,bga)
                                 while not (self._process_next or self._stop_event):
                                     self.msleep(50)
                             if self._stop_event:
@@ -127,7 +127,8 @@ class FileAnalyzerThread(QThread):
     def load_txt_file(self,file_path):
         # 导入三次元测量数据 .txt 文件，将所有单元的数据存储在数组中
         flag = False
-        data = []
+        result = []
+        unit = []
         with open(file_path, mode='rb') as f:
             encoding = chardet.detect(f.read())['encoding']
         with open(file_path, mode='r', encoding=encoding, errors='ignore') as f:
@@ -135,7 +136,8 @@ class FileAnalyzerThread(QThread):
                 if self.begin_pattern.match(line):
                     # 识别三次元数据起始标记
                     flag = True
-                    unit = {
+                    unit = []
+                    bga = {
                         'sn': '',
                         'location': '',
                         'date': '',
@@ -157,15 +159,32 @@ class FileAnalyzerThread(QThread):
                 if self.end_pattern.match(line):
                     # 识别三次元数据结束标记
                     flag = False
-                    if len(unit['pos']) > 2 and unit['sn']!="" and unit['location']!="":
-                        data.append(unit)
-                    else:
-                        if unit['sn']!="" and unit['location']!="":
-                            self.logging.emit(f"文件 {file_path} 中编号 {unit['sn']} 的 {unit['location']} 数据异常，已忽略！", "ERROR")
+                    
+                    for bga in unit:
+                        if "BGA" in bga['location'].upper():
+                            if len(bga['pos']) > 2 and bga['sn']!="" and bga['location']!="":
+                                result.append(bga)
+                            else:
+                                if bga['sn']!="" and bga['location']!="":
+                                    self.logging.emit(f"文件 {file_path} 中编号 {bga['sn']} 的 {bga['location']} 数据异常，已忽略！", "ERROR")
 
                 elif self.location_pattern.match(line):
                     # 识别测量位置
-                    unit['location'] = line.strip()
+                    bga['location'] = line.strip()
+                    unit.append(bga)
+                    bga = {
+                        'sn': '',
+                        'location': '',
+                        'date': '',
+                        'time': '',
+                        'minX': None,
+                        'maxX': None,
+                        'minY': None,
+                        'maxY': None,
+                        'flatness': None,
+                        'shape': '未知',
+                        'pos': []
+                    }
 
                 elif self.pos_pattern.match(line):
                     # 识别测量数据
@@ -173,32 +192,34 @@ class FileAnalyzerThread(QThread):
                     x = float(pos[0])
                     y = float(pos[1])
                     z = float(pos[2])
-                    if unit['minX'] is None or x < unit['minX']:
-                        unit['minX'] = x
-                    if unit['maxX'] is None or x > unit['maxX']:
-                        unit['maxX'] = x
-                    if unit['minY'] is None or y < unit['minY']:
-                        unit['minY'] = y
-                    if unit['maxY'] is None or y > unit['maxY']:
-                        unit['maxY'] = y
-                    unit['pos'].append([x, y, z])
+                    if bga['minX'] is None or x < bga['minX']:
+                        bga['minX'] = x
+                    if bga['maxX'] is None or x > bga['maxX']:
+                        bga['maxX'] = x
+                    if bga['minY'] is None or y < bga['minY']:
+                        bga['minY'] = y
+                    if bga['maxY'] is None or y > bga['maxY']:
+                        bga['maxY'] = y
+                    bga['pos'].append([x, y, z])
 
                 elif self.sn_pattern1.match(line):
                     # 识别测量编号，示使如下：
                     # 文字说明 75: 文字说明  文字说明 75: 日期/时间 2025-02-24 18:50:25 9206301-02
                     date, time, sn = self.sn_pattern1.match(line).groups()
-                    unit['sn'] = sn
-                    unit['date'] = date
-                    unit['time'] = time
+                    for bga in unit:
+                        bga['sn'] = sn
+                        bga['date'] = date
+                        bga['time'] = time
 
                 elif self.sn_pattern2.match(line):
                     # 识别测量编号，示例如下：
                     # 提示 44: 提示  提示 44: 输入 42363-03 提示 44: 日期/时间 2025-02-19 13:05:27
                     sn, date, time = self.sn_pattern2.match(line).groups()
-                    unit['sn'] = sn
-                    unit['date'] = date
-                    unit['time'] = time
-        return data
+                    for bga in unit:
+                        bga['sn'] = sn
+                        bga['date'] = date
+                        bga['time'] = time
+        return result
     def calcFlatness(self,data):
         # 计算理想参考平面的系数
         matrixA = [[v[0], v[1], 1] for v in data['pos']]
@@ -268,9 +289,6 @@ class FileAnalyzerThread(QThread):
                 # 凹凸不平
                 data['shape'] = '凹凸不平'
 
-        # 将Z坐标转换为正值
-        for point in data['pos']:
-            point[2] = point[2]-minZ
         data['flatness'] = round(maxZ-minZ,4)
         return data
 
@@ -452,6 +470,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         func = interpolate.Rbf(x, y, z, function=func_name)
         xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
         znew = func(xnew, ynew)
+        znew = znew - znew.min()
+        zmax = math.ceil(znew.max()*1000)/1000
 
         dpi=self.config["plotDPI"]
 
@@ -461,6 +481,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             return
         self.figure_3d.clf()
         ax_3d = Axes3D(self.figure_3d, auto_add_to_figure=False)
+        ax_3d.set_title(f"{data['sn']} {data['location']}", fontfamily='SimHei', loc='right')
         ax_3d.set_xlabel('X')
         ax_3d.set_ylabel('Y')
         ax_3d.set_zlabel('Z')
@@ -469,9 +490,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         ax_3d.set_ylim(minY, maxY)
         self.figure_3d.add_axes(ax_3d)
         surf = ax_3d.plot_surface(
-            xnew, ynew, znew, cmap=color_map)
-        self.figure_3d.colorbar(
-            surf, shrink=0.6, aspect=10)
+            xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
+        self.figure_3d.colorbar(surf, shrink=0.6, aspect=10)
         self.figure_3d.canvas.draw()
         plot3d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_3D.jpg")
         self.figure_3d.savefig(plot3d_file, dpi=dpi, bbox_inches="tight")
@@ -482,12 +502,13 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             return
         self.figure_2d.clf()
         ax_2d = self.figure_2d.add_subplot(111)
+        ax_2d.set_title(f"{data['sn']} {data['location']}", fontfamily='SimHei')
         ax_2d.set_xlabel('X')
         ax_2d.set_ylabel('Y')
         ax_2d.set_xlim(minX, maxX)
         ax_2d.set_ylim(minY, maxY)
-        contour = ax_2d.contourf(xnew, ynew, znew, cmap=color_map)
-        self.figure_2d.colorbar(contour, shrink=0.6, aspect=10)
+        contour = ax_2d.contourf(xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
+        self.figure_2d.colorbar(contour, shrink=0.8, aspect=10)
         ax_2d.scatter(x, y,  c='r', marker='o')
         self.figure_2d.canvas.draw()
         plot2d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_2D.jpg")
