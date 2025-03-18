@@ -33,7 +33,8 @@ class FileAnalyzerThread(QThread):
         self.config = {
             "dataDirectory": "D:\\",
             "centralZoneLimit": 0.5,
-            "rbfFunction": "thin_plate"
+            "rbfFunction": "thin_plate",
+            "scanDirectoryInterval": 30
         }
         self._process_next = False
         self._stop_event = True
@@ -58,6 +59,7 @@ class FileAnalyzerThread(QThread):
         while True:
             while not self._stop_event:
                 search_pattern = os.path.join(self.config['dataDirectory'], "**", "*平整度*.txt")
+                scanDirectoryInterval=int(self.config['scanDirectoryInterval'])
                 for file_path in glob.iglob(search_pattern, recursive=True):
                     if self._stop_event:
                         break
@@ -88,7 +90,7 @@ class FileAnalyzerThread(QThread):
                                 self._process_next=False
                                 self.flatnessSignal.emit(dirpath,filename,data)
                                 while not (self._process_next or self._stop_event):
-                                    self.msleep(100)
+                                    self.msleep(50)
                             if self._stop_event:
                                 self.logging.emit(f"已经停止文件 {fullfilename} 的平整度分析！", "ERROR")
                                 break
@@ -99,8 +101,8 @@ class FileAnalyzerThread(QThread):
                                 self.logging.emit(f"文件 {fullfilename} 分析完成！", "INFO")
                         except Exception as e:
                             self.logging.emit(f"文件 {fullfilename} 分析失败：{e}", "ERROR")
-                self.showInfoSignal.emit("等待30秒后重新扫描文件夹。")
-                for _ in range(30):
+                self.showInfoSignal.emit(f"等待 {scanDirectoryInterval}  秒后重新扫描文件夹。")
+                for _ in range(scanDirectoryInterval):
                     self.msleep(1000)
                     if self._stop_event:
                         break
@@ -269,7 +271,7 @@ class FileAnalyzerThread(QThread):
         # 将Z坐标转换为正值
         for point in data['pos']:
             point[2] = point[2]-minZ
-        data['flatness'] = maxZ-minZ
+        data['flatness'] = round(maxZ-minZ,4)
         return data
 
 
@@ -284,11 +286,18 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        self.load_config()  # 加载配置信息
         self.setWindowTitle("平整度自动分析程序")
         self.setWindowIcon(QIcon(":/icon.ico"))
+        self.folderPath.setText(self.config["dataDirectory"])
+        self._stop_event = True
+        self.figure_3d=plt.figure()
+        self.figure_2d=plt.figure()
+
         self.btnStop.setEnabled(False)
         self.processLog.setReadOnly(True)
         self.processLog.setMaximumBlockCount(1000)
+
         self.analyzer_thread = FileAnalyzerThread()
         self.analyzer_thread.logging.connect(self.logging)
         self.analyzer_thread.flatnessSignal.connect(self.create_plot)
@@ -304,14 +313,10 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.btnStart.clicked.connect(self.start_analysis)
         self.btnStop.clicked.connect(self.stop_analysis)
         self.btnExit.clicked.connect(self.exit_application)  # 添加 btnExit 按钮点击事件处理函数
-
-        self.load_config()  # 加载配置信息
-        self._stop_event = True
-        self.folderPath.setText(self.config["dataDirectory"])
         self.update_config_signal.connect(self.analyzer_thread.update_config)
         self.start_thread_signal.emit()
-        self.statusbar.showMessage("就绪。")  # 初始化状态栏信息
 
+        self.statusbar.showMessage("就绪。")  # 初始化状态栏信息
         if self.config["autoStart"]:
             self.btnStart.click()
 
@@ -330,6 +335,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             "centralZoneLimit": 0.5,
             "rbfFunction": "thin_plate",
             "colorMap": "rainbow",
+            "plotDPI":100,
+            "scanDirectoryInterval": 30,
             "autoStart": True
         }
 
@@ -367,6 +374,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     def stop_analysis(self):
         self.stop_thread_signal.emit()
         self.logging("手动停止后台平整度数据分析。", "ERROR")
+        self.statusbar.showMessage("已停止平整度自动分析。")
         self.btnSelectFolder.setEnabled(True)
         self.btnStart.setEnabled(True)
         self.btnStop.setEnabled(False)
@@ -399,12 +407,16 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
     def closeEvent(self, event):
         self.stop_thread_signal.emit()
         self.terminate_thread_signal.emit()
+        plt.close(self.figure_3d)
+        plt.close(self.figure_2d)
         self.analyzer_thread.wait()  # 等待线程结束
         event.accept()
 
     def exit_application(self):  # 新增的退出应用程序函数
         self.stop_thread_signal.emit()
         self.terminate_thread_signal.emit()
+        plt.close(self.figure_3d)
+        plt.close(self.figure_2d)
         self.analyzer_thread.wait()  # 等待线程结束
         QApplication.quit()  # 退出应用程序
 
@@ -441,63 +453,47 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
         znew = func(xnew, ynew)
 
+        dpi=self.config["plotDPI"]
+
         # 绘制三维曲面图
         QCoreApplication.processEvents()
         if self._stop_event:
             return
-        figure_3d = plt.figure()
-        ax_3d = Axes3D(figure_3d, auto_add_to_figure=False)
+        self.figure_3d.clf()
+        ax_3d = Axes3D(self.figure_3d, auto_add_to_figure=False)
         ax_3d.set_xlabel('X')
         ax_3d.set_ylabel('Y')
         ax_3d.set_zlabel('Z')
         ax_3d.view_init(elev=60, azim=-70)
         ax_3d.set_xlim(minX, maxX)
         ax_3d.set_ylim(minY, maxY)
-        figure_3d.add_axes(ax_3d)
+        self.figure_3d.add_axes(ax_3d)
         surf = ax_3d.plot_surface(
             xnew, ynew, znew, cmap=color_map)
-        figure_3d.colorbar(
+        self.figure_3d.colorbar(
             surf, shrink=0.6, aspect=10)
-        figure_3d.canvas.draw()
+        self.figure_3d.canvas.draw()
         plot3d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_3D.jpg")
-        plt.savefig(plot3d_file)
-        plt.close(figure_3d)
+        self.figure_3d.savefig(plot3d_file, dpi=dpi, bbox_inches="tight")
 
         # 创建二维等高线图
         QCoreApplication.processEvents()
         if self._stop_event:
             return
-        figure_2d = plt.figure()
-        ax_2d = figure_2d.add_subplot(111)
+        self.figure_2d.clf()
+        ax_2d = self.figure_2d.add_subplot(111)
         ax_2d.set_xlabel('X')
         ax_2d.set_ylabel('Y')
         ax_2d.set_xlim(minX, maxX)
         ax_2d.set_ylim(minY, maxY)
         contour = ax_2d.contourf(xnew, ynew, znew, cmap=color_map)
-        figure_2d.colorbar(contour, shrink=0.6, aspect=10)
+        self.figure_2d.colorbar(contour, shrink=0.6, aspect=10)
         ax_2d.scatter(x, y,  c='r', marker='o')
-        figure_2d.canvas.draw()
+        self.figure_2d.canvas.draw()
         plot2d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_2D.jpg")
-        plt.savefig(plot2d_file)
-        plt.close(figure_2d)
+        self.figure_2d.savefig(plot2d_file, dpi=dpi, bbox_inches="tight")
 
         self.process_next_signal.emit()
-
-def find_matching_files(directory, pattern):
-    """
-    使用 glob 模块递归遍历目录，查找所有符合通配符模式的文件。
-    """
-    # 构造递归匹配模式（兼容跨平台路径格式）
-    search_pattern = os.path.join(directory, "**", pattern)
-    
-    # 遍历所有匹配路径（使用生成器模式节省内存）
-    for file_path in glob.iglob(search_pattern, recursive=True):
-        if os.path.isfile(file_path):  # 确保仅处理文件
-            dirpath = os.path.dirname(file_path)
-            filename = os.path.basename(file_path)
-            name_part, ext_part = os.path.splitext(filename)
-            yield (file_path, dirpath, name_part, ext_part)
-
 
 
 if __name__ == "__main__":

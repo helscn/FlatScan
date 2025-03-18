@@ -3,5 +3,7 @@
   "centralZoneLimit": 0.5,
   "rbfFunction": "thin_plate",
   "colorMap": "rainbow",
+  "plotDPI": 100,
+  "scanDirectoryInterval": 30,
   "autoStart": true
 }
