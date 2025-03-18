@@ -32,12 +32,12 @@ VSVersionInfo(
         '080404B0',
         [StringStruct('Comments', '自动分析指定文件夹下的三次元量测平整度数据。'),
         StringStruct('CompanyName', 'SYE'),
-        StringStruct('FileDescription', 'Flatness Analyzer'),
+        StringStruct('FileDescription', 'Flatness Scaner'),
         StringStruct('LegalCopyright', '何罗生'),
         StringStruct('ProductName', '平整度自动分析程序'),
         StringStruct('FileVersion', '1.0'),
         StringStruct('ProductVersion', '1.0'),
-        StringStruct('InternalName', 'FlatnessScaner'),
+        StringStruct('InternalName', 'Flatness Scaner'),
         StringStruct('OriginalFilename', 'FlatScan.exe')])
       ])
   ]

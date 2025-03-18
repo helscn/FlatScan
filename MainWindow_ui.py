@@ -18,6 +18,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPlainTextEdit, QPushButton, QSizePolicy,
     QStatusBar, QVBoxLayout, QWidget)
+import resource_rc
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -65,16 +66,19 @@ class Ui_MainWindow(object):
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
         self.btnStart = QPushButton(self.centralwidget)
         self.btnStart.setObjectName(u"btnStart")
+        self.btnStart.setMinimumSize(QSize(0, 35))
 
         self.horizontalLayout_2.addWidget(self.btnStart)
 
         self.btnStop = QPushButton(self.centralwidget)
         self.btnStop.setObjectName(u"btnStop")
+        self.btnStop.setMinimumSize(QSize(0, 35))
 
         self.horizontalLayout_2.addWidget(self.btnStop)
 
         self.btnExit = QPushButton(self.centralwidget)
         self.btnExit.setObjectName(u"btnExit")
+        self.btnExit.setMinimumSize(QSize(0, 35))
 
         self.horizontalLayout_2.addWidget(self.btnExit)
 
