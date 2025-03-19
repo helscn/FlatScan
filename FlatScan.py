@@ -26,7 +26,7 @@ from MainWindow_ui import Ui_MainWindow
 class FileAnalyzerThread(QThread):
     logging = Signal(str, str)
     showInfoSignal = Signal(str)
-    flatnessSignal = Signal(str, str, dict)   #文件夹，文件名，平整度数据
+    flatnessSignal = Signal(str, str, dict)   # 文件夹，文件名，平整度数据
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,7 +59,7 @@ class FileAnalyzerThread(QThread):
         while True:
             while not self._stop_event:
                 search_pattern = os.path.join(self.config['dataDirectory'], "**", "*平整度*.txt")
-                scanDirectoryInterval=int(self.config['scanDirectoryInterval'])
+                scanDirectoryInterval = int(self.config['scanDirectoryInterval'])
                 for file_path in glob.iglob(search_pattern, recursive=True):
                     if self._stop_event:
                         break
@@ -69,39 +69,39 @@ class FileAnalyzerThread(QThread):
                         fullfilename = os.path.basename(file_path)
                         filename, fileext = os.path.splitext(fullfilename)
                         
-                        result_file=os.path.join(dirpath,filename+".csv")
+                        result_file = os.path.join(dirpath, filename + ".csv")
                         if os.path.isfile(result_file):
                             # 跳过已经转换的txt文件
                             continue
                         
                         self.logging.emit(f"正在分析文件：{file_path}", "INFO")
-                        rawdata=self.load_txt_file(file_path)  # 读取三次元量测的txt文件
+                        rawdata = self.load_txt_file(file_path)  # 读取三次元量测的txt文件
                         if not rawdata:
                             self.logging.emit(f"文件 {fullfilename} 中没有找到量测数据！", "ERROR")
                             continue
 
-                        result=[["文件名","日期","时间","板编号","量测位置","中心形貌","平整度"]]
+                        result = [["文件名", "日期", "时间", "板编号", "量测位置", "中心形貌", "平整度"]]
                         try:
                             for bga in rawdata:
                                 if self._stop_event:
                                     break
-                                bga=self.calcFlatness(bga)    # 计算相对理想平面的Z坐标
-                                result.append([filename,bga['date'],bga['time'],bga['sn'],bga['location'],bga['shape'],bga['flatness']])
-                                self._process_next=False
-                                self.flatnessSignal.emit(dirpath,filename,bga)
+                                bga = self.calcFlatness(bga)    # 计算相对理想平面的Z坐标
+                                result.append([filename, bga['date'], bga['time'], bga['sn'], bga['location'], bga['shape'], bga['flatness']])
+                                self._process_next = False
+                                self.flatnessSignal.emit(dirpath, filename, bga)
                                 while not (self._process_next or self._stop_event):
                                     self.msleep(50)
                             if self._stop_event:
                                 self.logging.emit(f"已经停止文件 {fullfilename} 的平整度分析！", "ERROR")
                                 break
-                            with open(result_file,mode='w',newline='',encoding='gb2312') as csvfile:
+                            with open(result_file, mode='w', newline='', encoding='gb2312') as csvfile:
                                 # 保存平整度数据
                                 writer = csv.writer(csvfile)
                                 writer.writerows(result)
                                 self.logging.emit(f"文件 {fullfilename} 分析完成！", "INFO")
                         except Exception as e:
-                            self.logging.emit(f"文件 {fullfilename} 分析失败：{e}", "ERROR")
-                self.showInfoSignal.emit(f"等待 {scanDirectoryInterval}  秒后重新扫描文件夹。")
+                            self.logging.emit(f"文件 {fullfilename} 分析平整度时出现错误：{e}", "ERROR")
+                self.showInfoSignal.emit(f"所有数据分析完成，等待 {scanDirectoryInterval}  秒后重新扫描文件夹。")
                 for _ in range(scanDirectoryInterval):
                     self.msleep(1000)
                     if self._stop_event:
@@ -113,10 +113,9 @@ class FileAnalyzerThread(QThread):
             if self._stop_event:
                 self.msleep(1000)
 
-                
-
     def resume(self):
         self._stop_event = False
+
     def stop(self):
         self._stop_event = True
 
@@ -124,120 +123,122 @@ class FileAnalyzerThread(QThread):
         self._terminal = True
         self._stop_event = True
 
-    def load_txt_file(self,file_path):
+    def load_txt_file(self, file_path):
         # 导入三次元测量数据 .txt 文件，将所有单元的数据存储在数组中
         flag = False
         result = []
         unit = []
-        with open(file_path, mode='rb') as f:
-            encoding = chardet.detect(f.read())['encoding']
-        with open(file_path, mode='r', encoding=encoding, errors='ignore') as f:
-            for line in f:
-                if self.begin_pattern.match(line):
-                    # 识别三次元数据起始标记
-                    flag = True
-                    unit = []
-                    bga = {
-                        'sn': '',
-                        'location': '',
-                        'date': '',
-                        'time': '',
-                        'minX': None,
-                        'maxX': None,
-                        'minY': None,
-                        'maxY': None,
-                        'flatness': None,
-                        'shape': '未知',
-                        'pos': []
-                    }
-                    continue
+        try:
+            with open(file_path, mode='rb') as f:
+                encoding = chardet.detect(f.read())['encoding']
+            with open(file_path, mode='r', encoding=encoding, errors='ignore') as f:
+                for line in f:
+                    if self.begin_pattern.match(line):
+                        # 识别三次元数据起始标记
+                        flag = True
+                        unit = []
+                        bga = {
+                            'sn': '',
+                            'location': '',
+                            'date': '',
+                            'time': '',
+                            'minX': None,
+                            'maxX': None,
+                            'minY': None,
+                            'maxY': None,
+                            'flatness': None,
+                            'shape': '未知',
+                            'pos': []
+                        }
+                        continue
 
-                if not flag:
-                    # 未识别到三次元数据起始标记时忽略
-                    continue
+                    if not flag:
+                        # 未识别到三次元数据起始标记时忽略
+                        continue
 
-                if self.end_pattern.match(line):
-                    # 识别三次元数据结束标记
-                    flag = False
-                    
-                    for bga in unit:
-                        if "BGA" in bga['location'].upper():
-                            if len(bga['pos']) > 2 and bga['sn']!="" and bga['location']!="":
-                                result.append(bga)
-                            else:
-                                if bga['sn']!="" and bga['location']!="":
-                                    self.logging.emit(f"文件 {file_path} 中编号 {bga['sn']} 的 {bga['location']} 数据异常，已忽略！", "ERROR")
+                    if self.end_pattern.match(line):
+                        # 识别三次元数据结束标记
+                        flag = False
+                        
+                        for bga in unit:
+                            if "BGA" in bga['location'].upper():
+                                if len(bga['pos']) > 2 and bga['sn'] != "" and bga['location'] != "":
+                                    result.append(bga)
+                                else:
+                                    if bga['sn'] != "" and bga['location'] != "":
+                                        self.logging.emit(f"文件 {file_path} 中编号 {bga['sn']} 的 {bga['location']} 数据异常，已忽略！", "ERROR")
 
-                elif self.location_pattern.match(line):
-                    # 识别测量位置
-                    bga['location'] = line.strip()
-                    unit.append(bga)
-                    bga = {
-                        'sn': '',
-                        'location': '',
-                        'date': '',
-                        'time': '',
-                        'minX': None,
-                        'maxX': None,
-                        'minY': None,
-                        'maxY': None,
-                        'flatness': None,
-                        'shape': '未知',
-                        'pos': []
-                    }
+                    elif self.location_pattern.match(line):
+                        # 识别测量位置
+                        bga['location'] = line.strip()
+                        unit.append(bga)
+                        bga = {
+                            'sn': '',
+                            'location': '',
+                            'date': '',
+                            'time': '',
+                            'minX': None,
+                            'maxX': None,
+                            'minY': None,
+                            'maxY': None,
+                            'flatness': None,
+                            'shape': '未知',
+                            'pos': []
+                        }
 
-                elif self.pos_pattern.match(line):
-                    # 识别测量数据
-                    pos = self.pos_pattern.match(line).groups()
-                    x = float(pos[0])
-                    y = float(pos[1])
-                    z = float(pos[2])
-                    if bga['minX'] is None or x < bga['minX']:
-                        bga['minX'] = x
-                    if bga['maxX'] is None or x > bga['maxX']:
-                        bga['maxX'] = x
-                    if bga['minY'] is None or y < bga['minY']:
-                        bga['minY'] = y
-                    if bga['maxY'] is None or y > bga['maxY']:
-                        bga['maxY'] = y
-                    bga['pos'].append([x, y, z])
+                    elif self.pos_pattern.match(line):
+                        # 识别测量数据
+                        pos = self.pos_pattern.match(line).groups()
+                        x = float(pos[0])
+                        y = float(pos[1])
+                        z = float(pos[2])
+                        if bga['minX'] is None or x < bga['minX']:
+                            bga['minX'] = x
+                        if bga['maxX'] is None or x > bga['maxX']:
+                            bga['maxX'] = x
+                        if bga['minY'] is None or y < bga['minY']:
+                            bga['minY'] = y
+                        if bga['maxY'] is None or y > bga['maxY']:
+                            bga['maxY'] = y
+                        bga['pos'].append([x, y, z])
 
-                elif self.sn_pattern1.match(line):
-                    # 识别测量编号，示使如下：
-                    # 文字说明 75: 文字说明  文字说明 75: 日期/时间 2025-02-24 18:50:25 9206301-02
-                    date, time, sn = self.sn_pattern1.match(line).groups()
-                    for bga in unit:
-                        bga['sn'] = sn
-                        bga['date'] = date
-                        bga['time'] = time
+                    elif self.sn_pattern1.match(line):
+                        # 识别测量编号，示使如下：
+                        # 文字说明 75: 文字说明  文字说明 75: 日期/时间 2025-02-24 18:50:25 9206301-02
+                        date, time, sn = self.sn_pattern1.match(line).groups()
+                        for bga in unit:
+                            bga['sn'] = sn
+                            bga['date'] = date
+                            bga['time'] = time
 
-                elif self.sn_pattern2.match(line):
-                    # 识别测量编号，示例如下：
-                    # 提示 44: 提示  提示 44: 输入 42363-03 提示 44: 日期/时间 2025-02-19 13:05:27
-                    sn, date, time = self.sn_pattern2.match(line).groups()
-                    for bga in unit:
-                        bga['sn'] = sn
-                        bga['date'] = date
-                        bga['time'] = time
+                    elif self.sn_pattern2.match(line):
+                        # 识别测量编号，示例如下：
+                        # 提示 44: 提示  提示 44: 输入 42363-03 提示 44: 日期/时间 2025-02-19 13:05:27
+                        sn, date, time = self.sn_pattern2.match(line).groups()
+                        for bga in unit:
+                            bga['sn'] = sn
+                            bga['date'] = date
+                            bga['time'] = time
+        except Exception as e:
+            self.logging.emit(f"数据文件 {file_path} 解析失败：{e}", "ERROR")
         return result
-    def calcFlatness(self,data):
+
+    def calcFlatness(self, data):
         # 计算理想参考平面的系数
-        matrixA = [[v[0], v[1], 1] for v in data['pos']]
-        matrixB = [[v[2]] for v in data['pos']]
-        matrixA = np.array(matrixA)
-        matrixB = np.array(matrixB)
+        matrixA = np.array([[v[0], v[1], 1] for v in data['pos']])
+        matrixB = np.array([[v[2]] for v in data['pos']])
         matrixCoeff = np.dot(np.dot(np.linalg.inv(
             np.dot(matrixA.T, matrixA)), matrixA.T), matrixB)
         coeffA = -1 * matrixCoeff[0][0]
         coeffB = -1 * matrixCoeff[1][0]
         coeffC = 1
         coeffD = -1 * matrixCoeff[2][0]
-        constant = math.sqrt(coeffA*coeffA+coeffB*coeffB+coeffC*coeffC)
+        constant = math.sqrt(coeffA * coeffA + coeffB * coeffB + coeffC * coeffC)
 
         # 计算每个点参考理想平面的高度
         for point in data['pos']:
-            point[2] = (coeffA*point[0]+coeffB*point[1] +
-                        coeffC*point[2]+coeffD)/constant
+            point[2] = (coeffA * point[0] + coeffB * point[1] +
+                        coeffC * point[2] + coeffD) / constant
 
         # 计算中心形貌统计值
         centralZoneLimit = self.config['centralZoneLimit']
@@ -261,10 +262,10 @@ class FileAnalyzerThread(QThread):
             maxX = data['maxX']
             minY = data['minY']
             maxY = data['maxY']
-            rangeX = maxX-minX
-            rangeY = maxY-minY
+            rangeX = maxX - minX
+            rangeY = maxY - minY
 
-            if abs(2*(point[0]-minX)/rangeX - 1) < centralZoneLimit and abs(2*(point[1]-minY)/rangeY - 1) < centralZoneLimit:
+            if abs(2 * (point[0] - minX) / rangeX - 1) < centralZoneLimit and abs(2 * (point[1] - minY) / rangeY - 1) < centralZoneLimit:
                 # 当前量测点为板中心位置时
                 if centralMinZ is None or point[2] < centralMinZ:
                     centralMinZ = point[2]
@@ -276,7 +277,7 @@ class FileAnalyzerThread(QThread):
                 marginalCount += 1
 
         # 计算中心区域形貌
-        marginalAvg = marginalSumZ/marginalCount
+        marginalAvg = marginalSumZ / marginalCount
         data['shape'] = '未知'
         if centralMinZ is not None:
             if centralMinZ > marginalAvg:
@@ -289,7 +290,7 @@ class FileAnalyzerThread(QThread):
                 # 凹凸不平
                 data['shape'] = '凹凸不平'
 
-        data['flatness'] = round(maxZ-minZ,4)
+        data['flatness'] = round(maxZ - minZ, 4)
         return data
 
 
@@ -309,8 +310,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.setWindowIcon(QIcon(":/icon.ico"))
         self.folderPath.setText(self.config["dataDirectory"])
         self._stop_event = True
-        self.figure_3d=plt.figure()
-        self.figure_2d=plt.figure()
+        self.figure_3d = plt.figure()
+        self.figure_2d = plt.figure()
 
         self.btnStop.setEnabled(False)
         self.processLog.setReadOnly(True)
@@ -340,8 +341,10 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
     def resume(self):
         self._stop_event = False
+
     def stop(self):
         self._stop_event = True
+
     def load_config(self):
         # 获取当前脚本文件所在目录
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -353,7 +356,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             "centralZoneLimit": 0.5,
             "rbfFunction": "thin_plate",
             "colorMap": "rainbow",
-            "plotDPI":100,
+            "plotDPI": 100,
             "scanDirectoryInterval": 30,
             "autoStart": True
         }
@@ -384,7 +387,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         if folder_path:
             self.update_config_signal.emit(self.config)
             self.resume_thread_signal.emit()
-            self.logging("正在搜索以下文件夹中的平整度数据："+folder_path, "WARN")
+            self.logging("正在搜索以下文件夹中的平整度数据：" + folder_path, "WARN")
             self.btnSelectFolder.setEnabled(False)
             self.btnStart.setEnabled(False)
             self.btnStop.setEnabled(True)
@@ -404,7 +407,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             "ERROR": "#FF6969"
         }.get(level, "#141414")
         
-        now=datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
         self.processLog.appendHtml(f'<div style="color: {color}">[{now}] {message}</div>')
         self.processLog.verticalScrollBar().setValue(self.processLog.verticalScrollBar().maximum())
 
@@ -418,7 +421,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         if selected_dir:
             selected_dir = os.path.normpath(selected_dir)
             self.folderPath.setText(selected_dir)
-            self.config["dataDirectory"]=selected_dir
+            self.config["dataDirectory"] = selected_dir
             self.save_config()
             self.update_config_signal.emit(self.config)
 
@@ -442,16 +445,18 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         # 根据X、Y坐标数据计算图表坐标轴显示范围
         xmin = np.min(serialx)
         xmax = np.max(serialx)
-        xavg = (xmin+xmax)/2
+        xavg = (xmin + xmax) / 2
         ymin = np.min(serialy)
         ymax = np.max(serialy)
-        yavg = (ymin+ymax)/2
-        xrange = xmax-xmin
-        yrange = ymax-ymin
+        yavg = (ymin + ymax) / 2
+        xrange = xmax - xmin
+        yrange = ymax - ymin
         if xrange > yrange:
-            return xmin, xmax, yavg-yrange*xrange/yrange/2, yavg+yrange*xrange/yrange/2
+            half_range = xrange / 2
+            return xmin, xmax, yavg - half_range, yavg + half_range
         else:
-            return xavg-xrange*yrange/xrange/2, xavg+xrange*yrange/xrange/2, ymin, ymax
+            half_range = yrange / 2
+            return xavg - half_range, xavg + half_range, ymin, ymax
 
     def create_plot(self, dirpath, filename, data):
         # 使用matplotlib绘制三维曲面图及二维等高线图，并将图形保存到指定路径
@@ -459,62 +464,66 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         QCoreApplication.processEvents()
         if self._stop_event:
             return
-        x = [point[0] for point in data['pos']]
-        y = [point[1] for point in data['pos']]
-        z = [point[2] for point in data['pos']]
-        minX, maxX, minY, maxY = self.get_axes_limit(x, y)
+        
+        try:
+            x = [point[0] for point in data['pos']]
+            y = [point[1] for point in data['pos']]
+            z = [point[2] for point in data['pos']]
+            minX, maxX, minY, maxY = self.get_axes_limit(x, y)
 
-        # 使用RBF插值函数进行曲面拟合
-        func_name = self.config['rbfFunction']
-        color_map = self.config['colorMap']
-        func = interpolate.Rbf(x, y, z, function=func_name)
-        xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
-        znew = func(xnew, ynew)
-        znew = znew - znew.min()
-        zmax = math.ceil(znew.max()*1000)/1000
+            # 使用RBF插值函数进行曲面拟合
+            func_name = self.config['rbfFunction']
+            color_map = self.config['colorMap']
+            func = interpolate.Rbf(x, y, z, function=func_name)
+            xnew, ynew = np.mgrid[np.min(x):np.max(x):50j, np.min(y):np.max(y):50j]
+            znew = func(xnew, ynew)
+            znew = znew - znew.min()
+            zmax = math.ceil(znew.max() * 1000) / 1000
 
-        dpi=self.config["plotDPI"]
+            dpi = self.config["plotDPI"]    # 输出图片的DPI，文件大小和DPI平方呈正比
 
-        # 绘制三维曲面图
-        QCoreApplication.processEvents()
-        if self._stop_event:
-            return
-        self.figure_3d.clf()
-        ax_3d = Axes3D(self.figure_3d, auto_add_to_figure=False)
-        ax_3d.set_title(f"{data['sn']} {data['location']}", fontfamily='SimHei', loc='right')
-        ax_3d.set_xlabel('X')
-        ax_3d.set_ylabel('Y')
-        ax_3d.set_zlabel('Z')
-        ax_3d.view_init(elev=60, azim=-70)
-        ax_3d.set_xlim(minX, maxX)
-        ax_3d.set_ylim(minY, maxY)
-        self.figure_3d.add_axes(ax_3d)
-        surf = ax_3d.plot_surface(
-            xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
-        self.figure_3d.colorbar(surf, shrink=0.6, aspect=10)
-        self.figure_3d.canvas.draw()
-        plot3d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_3D.jpg")
-        self.figure_3d.savefig(plot3d_file, dpi=dpi, bbox_inches="tight")
+            # 绘制三维曲面图
+            QCoreApplication.processEvents()
+            if self._stop_event:
+                return
+            self.figure_3d.clf()
+            ax_3d = Axes3D(self.figure_3d, auto_add_to_figure=False)
+            ax_3d.set_title(f"{data['sn']} {data['location']}", fontfamily='SimHei', loc='right')
+            ax_3d.set_xlabel('X')
+            ax_3d.set_ylabel('Y')
+            ax_3d.set_zlabel('Z')
+            ax_3d.view_init(elev=60, azim=-70)
+            ax_3d.set_xlim(minX, maxX)
+            ax_3d.set_ylim(minY, maxY)
+            self.figure_3d.add_axes(ax_3d)
+            surf = ax_3d.plot_surface(
+                xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
+            self.figure_3d.colorbar(surf, shrink=0.6, aspect=10)
+            self.figure_3d.canvas.draw()
+            plot3d_file = os.path.join(dirpath, f"{filename}_{data['sn']}_{data['location']}_3D.jpg")
+            self.figure_3d.savefig(plot3d_file, dpi=dpi, bbox_inches="tight")
 
-        # 创建二维等高线图
-        QCoreApplication.processEvents()
-        if self._stop_event:
-            return
-        self.figure_2d.clf()
-        ax_2d = self.figure_2d.add_subplot(111)
-        ax_2d.set_title(f"{data['sn']} {data['location']}", fontfamily='SimHei')
-        ax_2d.set_xlabel('X')
-        ax_2d.set_ylabel('Y')
-        ax_2d.set_xlim(minX, maxX)
-        ax_2d.set_ylim(minY, maxY)
-        contour = ax_2d.contourf(xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
-        self.figure_2d.colorbar(contour, shrink=0.8, aspect=10)
-        ax_2d.scatter(x, y,  c='r', marker='o')
-        self.figure_2d.canvas.draw()
-        plot2d_file=os.path.join(dirpath,f"{filename}_{data['sn']}_{data['location']}_2D.jpg")
-        self.figure_2d.savefig(plot2d_file, dpi=dpi, bbox_inches="tight")
-
-        self.process_next_signal.emit()
+            # 创建二维等高线图
+            QCoreApplication.processEvents()
+            if self._stop_event:
+                return
+            self.figure_2d.clf()
+            ax_2d = self.figure_2d.add_subplot(111)
+            ax_2d.set_title(f"{data['sn']} {data['location']}", fontfamily='SimHei')
+            ax_2d.set_xlabel('X')
+            ax_2d.set_ylabel('Y')
+            ax_2d.set_xlim(minX, maxX)
+            ax_2d.set_ylim(minY, maxY)
+            contour = ax_2d.contourf(xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
+            self.figure_2d.colorbar(contour, shrink=0.8, aspect=10)
+            ax_2d.scatter(x, y,  c='r', marker='o')
+            self.figure_2d.canvas.draw()
+            plot2d_file = os.path.join(dirpath, f"{filename}_{data['sn']}_{data['location']}_2D.jpg")
+            self.figure_2d.savefig(plot2d_file, dpi=dpi, bbox_inches="tight")
+        except Exception as e:
+            self.logging(f"使用文件 {filename} 中数据进行绘图时出现错误: {e}", "ERROR")
+        finally:
+            self.process_next_signal.emit()
 
 
 if __name__ == "__main__":
