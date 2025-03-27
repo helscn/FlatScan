@@ -30,12 +30,7 @@ class FileAnalyzerThread(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.config = {
-            "dataDirectory": "D:\\",
-            "centralZoneLimit": 0.5,
-            "rbfFunction": "thin_plate",
-            "scanDirectoryInterval": 30
-        }
+        self.config = {}
         self._process_next = False
         self._stop_event = True
         self._terminal = False
@@ -161,12 +156,14 @@ class FileAnalyzerThread(QThread):
                         flag = False
                         
                         for bga in unit:
-                            if "BGA" in bga['location'].upper():
-                                if len(bga['pos']) > 2 and bga['sn'] != "" and bga['location'] != "":
-                                    result.append(bga)
-                                else:
-                                    if bga['sn'] != "" and bga['location'] != "":
-                                        self.logging.emit(f"文件 {file_path} 中编号 {bga['sn']} 的 {bga['location']} 数据异常，已忽略！", "ERROR")
+                            if self.config['locationFilter'].upper() in bga['location'].upper():
+                                if bga['sn'] and bga['location']:
+                                    if len(bga['pos']) > 2:
+                                        result.append(bga)
+                                    else:
+                                        self.logging.emit(f"文件 {file_path} 中编号 {bga['sn']} 的 {bga['location']} 数据量测点数不足3个，已忽略！", "ERROR")
+                                        
+                                    
 
                     elif self.location_pattern.match(line):
                         # 识别测量位置
@@ -358,6 +355,12 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             "colorMap": "rainbow",
             "plotDPI": 100,
             "scanDirectoryInterval": 30,
+            "filesFilter": "*平整度*.txt",
+            "locationFilter": "BGA",
+            "filenameReplPattern": "^(.*?)(\\-\\d{5})?$",
+            "filenameReplResult": "\\1",
+            "output2DFile": "{filename}_{sn}_{location}_2D.jpg",
+            "output3DFile": "{filename}_{sn}_{location}_3D.jpg",
             "autoStart": True
         }
 
@@ -481,6 +484,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             zmax = math.ceil(znew.max() * 1000) / 1000
 
             dpi = self.config["plotDPI"]    # 输出图片的DPI，文件大小和DPI平方呈正比
+            filename = re.sub(self.config['filenameReplPattern'],self.config['filenameReplResult'],filename)
 
             # 绘制三维曲面图
             QCoreApplication.processEvents()
@@ -500,7 +504,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
                 xnew, ynew, znew, cmap=color_map, vmin=0, vmax=zmax)
             self.figure_3d.colorbar(surf, shrink=0.6, aspect=10)
             self.figure_3d.canvas.draw()
-            plot3d_file = os.path.join(dirpath, f"{filename}_{data['sn']}_{data['location']}_3D.jpg")
+            filename_3d=self.config['output3DFile'].format(filename=filename,sn=data['sn'],location=data['location'])
+            plot3d_file = os.path.join(dirpath, filename_3d)
             self.figure_3d.savefig(plot3d_file, dpi=dpi, bbox_inches="tight")
 
             # 创建二维等高线图
@@ -518,7 +523,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.figure_2d.colorbar(contour, shrink=0.8, aspect=10)
             ax_2d.scatter(x, y,  c='r', marker='o')
             self.figure_2d.canvas.draw()
-            plot2d_file = os.path.join(dirpath, f"{filename}_{data['sn']}_{data['location']}_2D.jpg")
+            filename_2d=self.config['output2DFile'].format(filename=filename,sn=data['sn'],location=data['location'])
+            plot2d_file = os.path.join(dirpath, filename_2d)
             self.figure_2d.savefig(plot2d_file, dpi=dpi, bbox_inches="tight")
         except Exception as e:
             self.logging(f"使用文件 {filename} 中数据进行绘图时出现错误: {e}", "ERROR")

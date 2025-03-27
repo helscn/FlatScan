@@ -5,5 +5,11 @@
   "colorMap": "rainbow",
   "plotDPI": 100,
   "scanDirectoryInterval": 30,
+  "filesFilter": "*平整度*.txt",
+  "locationFilter": "BGA",
+  "filenameReplPattern": "^(.*?)(\\-\\d{5})?$",
+  "filenameReplResult": "\\1",
+  "output2DFile": "{filename}_{sn}_{location}_2D.jpg",
+  "output3DFile": "{filename}_{sn}_{location}_3D.jpg",
   "autoStart": true
 }
