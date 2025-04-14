@@ -38,11 +38,11 @@ class FileAnalyzerThread(QThread):
         self.end_pattern = re.compile(r'^\:END\s*$')
         self.pos_pattern = re.compile(
             r'^点 \d+\: X 坐标\s+(-?\d+\.?\d*).*Y 坐标\s+(-?\d+\.?\d*).*Z 坐标\s+(-?\d+\.?\d*).*')
-        self.location_pattern = re.compile(r'^[^\s\:]+\s*$')
+        self.location_pattern = re.compile(r'^\s*[^\s\:]+\s*$')
         self.sn_pattern1 = re.compile(
-            r'^文字说明 \d+.*日期/时间 (\d{4}\-\d{2}\-\d{2}) (\d{2}\:\d{2}\:\d{2}) ([^\s]+)\s*$')
+            r'^文字说明\s+\d+.*日期/时间\s+(\d{4}\-\d{2}\-\d{2})\s+(\d{2}\:\d{2}\:\d{2})\s+([^\s]+)\s*$')
         self.sn_pattern2 = re.compile(
-            r'^提示 \d+.*输入 ([^\s]+)\s+.*日期/时间 (\d{4}\-\d{2}\-\d{2}) (\d{2}\:\d{2}\:\d{2})\s*$')
+            r'^提示\s+\d+.*输入\s+([^\s]+)\s+.*日期/时间\s+(\d{4}\-\d{2}\-\d{2})\s+(\d{2}\:\d{2}\:\d{2})\s*$')
 
     def update_config(self, config):
         self.config = config
